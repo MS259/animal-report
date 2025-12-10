@@ -1,0 +1,16 @@
+# Python / backend
+backend/__pycache__/
+backend/.pytest_cache/
+backend/reports.log
+backend/reports.db
+
+# Node / Expo
+app/node_modules/
+app/.expo/
+app/dist/
+app/.turbo/
+
+# General
+.env
+.DS_Store
+Thumbs.db

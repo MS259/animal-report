@@ -11,7 +11,7 @@ import * as Location from "expo-location";
 
 // TODO: Update this when backend is accessible from the device
 //const BACKEND_URL = "http://192.168.1.236/report";
-const BACKEND_URL = "http://127.0.0.1:8000/report";
+const BACKEND_URL = "https://animal-report-api.onrender.com/report";
 
 
 export default function HomeScreen() {

@@ -5,6 +5,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
+from datetime import datetime, date
+from typing import Optional, List
+from fastapi import Query
+from sqlalchemy import func
+
+
+
+
 
 from db import SessionLocal, ReportRecord, init_db
 
@@ -28,6 +36,12 @@ class Report(BaseModel):
     latitude: float
     longitude: float
     timestamp: datetime
+
+class StatsResponse(BaseModel):
+    total: int
+    window_total: int
+    by_type: dict
+
 
 
 @app.get("/")
@@ -71,15 +85,35 @@ def create_report(report: Report):
 
 
 @app.get("/reports")
-def list_reports(limit: int = 100):
+def list_reports(
+    limit: int = 100,
+    from_date: Optional[date] = Query(None, alias="from"),
+    to_date: Optional[date] = Query(None, alias="to"),
+):
     """
     Return the most recent reports from the database.
     This is what the dashboard will call.
+
+    Optional filters:
+    - ?from=YYYY-MM-DD  (inclusive)
+    - ?to=YYYY-MM-DD    (inclusive)
+    - ?limit=100
     """
     with SessionLocal() as session:
+        query = session.query(ReportRecord)
+
+        # from >=
+        if from_date is not None:
+            start_dt = datetime.combine(from_date, datetime.min.time())
+            query = query.filter(ReportRecord.timestamp >= start_dt)
+
+        # to <=
+        if to_date is not None:
+            end_dt = datetime.combine(to_date, datetime.max.time())
+            query = query.filter(ReportRecord.timestamp <= end_dt)
+
         records = (
-            session.query(ReportRecord)
-            .order_by(ReportRecord.timestamp.desc())
+            query.order_by(ReportRecord.timestamp.desc())
             .limit(limit)
             .all()
         )
@@ -94,6 +128,53 @@ def list_reports(limit: int = 100):
         }
         for r in records
     ]
+
+@app.get("/stats", response_model=StatsResponse)
+def get_stats(
+    from_date: Optional[date] = Query(None, alias="from"),
+    to_date: Optional[date] = Query(None, alias="to"),
+):
+    """
+    Basic statistics over all reports and over an optional time window.
+
+    Query params:
+    - ?from=YYYY-MM-DD  (inclusive)
+    - ?to=YYYY-MM-DD    (inclusive)
+    If no from/to given, window = all data.
+    """
+    with SessionLocal() as session:
+        # total in DB (no filters)
+        total = session.query(func.count(ReportRecord.id)).scalar() or 0
+
+        # build filtered query for the window
+        window_query = session.query(ReportRecord)
+
+        if from_date is not None:
+            start_dt = datetime.combine(from_date, datetime.min.time())
+            window_query = window_query.filter(ReportRecord.timestamp >= start_dt)
+
+        if to_date is not None:
+            end_dt = datetime.combine(to_date, datetime.max.time())
+            window_query = window_query.filter(ReportRecord.timestamp <= end_dt)
+
+        # count in window
+        window_total = window_query.count()
+
+        # breakdown by type in this window
+        by_type_rows = (
+            window_query
+            .with_entities(ReportRecord.type, func.count(ReportRecord.id))
+            .group_by(ReportRecord.type)
+            .all()
+        )
+
+        by_type = {t: c for (t, c) in by_type_rows if t is not None}
+
+    return StatsResponse(
+        total=total,
+        window_total=window_total,
+        by_type=by_type,
+    )
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
@@ -173,8 +254,6 @@ def dashboard():
       try {
         const res = await fetch('/reports?limit=500');
         const data = await res.json();
-        const counter = document.getElementById('counter');
-        counter.textContent = data.length + ' reports';
 
         // Group reports by approximate lat/lon
         const groups = {};
@@ -207,12 +286,30 @@ def dashboard():
         });
       } catch (e) {
         console.error(e);
-        const counter = document.getElementById('counter');
-        counter.textContent = 'Error loading';
       }
     }
 
+    async function loadStats() {
+      try {
+        const res = await fetch('/stats');
+        const data = await res.json();
+        const counter = document.getElementById('counter');
+
+        const dead = data.by_type.dead || 0;
+        const injured = data.by_type.injured || 0;
+
+        // Example: "14 total · dead: 10 · injured: 4"
+        counter.textContent = `${data.total} total · dead: ${dead} · injured: ${injured}`;
+      } catch (e) {
+        console.error(e);
+        const counter = document.getElementById('counter');
+        counter.textContent = 'Stats error';
+      }
+    }
+
+    // Load both map markers and stats
     loadReports();
+    loadStats();
   </script>
 
 </body>

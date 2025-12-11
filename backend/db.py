@@ -1,12 +1,22 @@
+import os
+
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-DATABASE_URL = "sqlite:///./reports.db"
+# Default: local SQLite for development
+DEFAULT_SQLITE_URL = "sqlite:///./reports.db"
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False},  # needed for SQLite + FastAPI
-)
+# If DATABASE_URL env var is set (e.g. on Render), use that instead
+DATABASE_URL = os.getenv("DATABASE_URL", DEFAULT_SQLITE_URL)
+
+# For SQLite we need the special connect_args; for Postgres we don't
+if DATABASE_URL.startswith("sqlite"):
+    engine = create_engine(
+        DATABASE_URL,
+        connect_args={"check_same_thread": False},
+    )
+else:
+    engine = create_engine(DATABASE_URL)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

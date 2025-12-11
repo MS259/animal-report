@@ -9,6 +9,8 @@ from datetime import datetime, date
 from typing import Optional, List
 from fastapi import Query
 from sqlalchemy import func
+from fastapi import BackgroundTasks
+
 
 
 
@@ -42,19 +44,9 @@ class StatsResponse(BaseModel):
     window_total: int
     by_type: dict
 
-
-
-@app.get("/")
-def read_root():
-    return {"status": "ok", "message": "Animal Report API running"}
-
-
-@app.post("/report")
-def create_report(report: Report):
+def process_report(report: Report) -> None:
     """
-    Store a new report:
-    - write to reports.log (legacy)
-    - insert into SQLite database
+    Background task: log report and store in DB.
     """
     line = (
         f"{report.timestamp.isoformat()} | "
@@ -79,9 +71,33 @@ def create_report(report: Report):
         )
         session.add(record)
         session.commit()
-        session.refresh(record)
 
-    return {"status": "ok", "id": record.id}
+
+@app.get("/")
+def read_root():
+    return {"status": "ok", "message": "Animal Report API running"}
+
+
+@app.post("/report")
+def create_report(report: Report, background_tasks: BackgroundTasks):
+    """
+    Store a new report:
+
+    - enqueue background task to log to file
+    - enqueue background task to insert into the database
+
+    Returns immediately without waiting for the DB write.
+    """
+    background_tasks.add_task(process_report, report)
+
+    return {
+        "status": "queued",
+        "message": "Report accepted for processing"
+    }
+
+
+
+
 
 
 @app.get("/reports")

@@ -11,13 +11,20 @@ import * as Location from "expo-location";
 
 // TODO: Update this when backend is accessible from the device
 //const BACKEND_URL = "http://192.168.1.236/report";
-const BACKEND_URL = "https://animal-report-api.onrender.com/report";
+// Backend base URL (set per environment). Fallback to production.
+const BACKEND_BASE_URL =
+  process.env.EXPO_PUBLIC_BACKEND_URL || "https://animal-report-api.onrender.com";
+
+const BACKEND_URL = `${BACKEND_BASE_URL.replace(/\/+$/, "")}/report`;
+
 
 
 export default function HomeScreen() {
   const [loading, setLoading] = useState(false);
 
   const requestAndSend = async (type: "dead" | "injured") => {
+    //console.log("BUTTON PRESSED, type =", type);
+    //console.log("BACKEND_URL =", BACKEND_URL);
     try {
       setLoading(true);
 
@@ -45,8 +52,13 @@ export default function HomeScreen() {
         body: JSON.stringify(payload),
       });
 
+      //console.log("ABOUT TO FETCH...");
+      //console.log("FETCH status =", resp.status);
+      const text = await resp.text();
+      //console.log("FETCH response body =", text);
+
       if (!resp.ok) {
-        throw new Error("Server error");
+        throw new Error(`Server error ${resp.status}: ${text}`);
       }
 
       Alert.alert("Thank you", "Report sent successfully.");

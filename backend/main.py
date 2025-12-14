@@ -45,16 +45,14 @@ class StatsResponse(BaseModel):
     by_type: dict
 
 def process_report(report: Report) -> None:
-    """
-    Background task: log report and store in DB.
-    """
+    print("PROCESS_REPORT START")
+
     line = (
         f"{report.timestamp.isoformat()} | "
         f"{report.type} | "
         f"{report.latitude},{report.longitude}\n"
     )
 
-    # Log to console
     print("NEW REPORT:", line.strip())
 
     # Legacy: still write to file for now
@@ -62,6 +60,29 @@ def process_report(report: Report) -> None:
         f.write(line)
 
     # Write to DB
+    try:
+        with SessionLocal() as session:
+            record = ReportRecord(
+                type=report.type,
+                latitude=report.latitude,
+                longitude=report.longitude,
+                timestamp=report.timestamp,
+            )
+            session.add(record)
+            session.commit()
+        print("DB INSERT OK")
+    except Exception as e:
+        print("DB INSERT FAILED:", repr(e))
+
+
+
+@app.get("/")
+def read_root():
+    return {"status": "ok", "message": "Animal Report API running"}
+
+
+@app.post("/report")
+def create_report(report: Report):
     with SessionLocal() as session:
         record = ReportRecord(
             type=report.type,
@@ -71,29 +92,9 @@ def process_report(report: Report) -> None:
         )
         session.add(record)
         session.commit()
+        session.refresh(record)
 
-
-@app.get("/")
-def read_root():
-    return {"status": "ok", "message": "Animal Report API running"}
-
-
-@app.post("/report")
-def create_report(report: Report, background_tasks: BackgroundTasks):
-    """
-    Store a new report:
-
-    - enqueue background task to log to file
-    - enqueue background task to insert into the database
-
-    Returns immediately without waiting for the DB write.
-    """
-    background_tasks.add_task(process_report, report)
-
-    return {
-        "status": "queued",
-        "message": "Report accepted for processing"
-    }
+    return {"status": "ok", "id": record.id}
 
 
 
@@ -259,74 +260,95 @@ def dashboard():
     crossorigin=""
   ></script>
     <script>
-    const map = L.map('map').setView([54.5, -2.5], 6); // roughly UK
+  // 1) Create map
+  const map = L.map('map').setView([54.5, -2.5], 6); // UK
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; OpenStreetMap contributors'
-    }).addTo(map);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
 
-    async function loadReports() {
-      try {
-        const res = await fetch('/reports?limit=500');
-        const data = await res.json();
+  // 2) Layer group so we can clear markers safely
+  const markersLayer = L.layerGroup().addTo(map);
 
-        // Group reports by approximate lat/lon
-        const groups = {};
+  // 3) Load reports and redraw markers
+  async function loadReports() {
+    try {
+      const res = await fetch('/reports?limit=500', { cache: 'no-store' });
+      const data = await res.json();
 
-        data.forEach(r => {
-          if (r.latitude == null || r.longitude == null) return;
-          const key = r.latitude.toFixed(4) + ',' + r.longitude.toFixed(4);
-          if (!groups[key]) {
-            groups[key] = {
-              lat: r.latitude,
-              lon: r.longitude,
-              total: 0,
-              dead: 0,
-              injured: 0,
-            };
-          }
-          groups[key].total += 1;
-          if (r.type === 'dead') groups[key].dead += 1;
-          if (r.type === 'injured') groups[key].injured += 1;
-        });
+      // clear old markers
+      markersLayer.clearLayers();
 
-        // Create one marker per location, with counts in the popup
-        Object.values(groups).forEach(g => {
-          const marker = L.marker([g.lat, g.lon]).addTo(map);
-          marker.bindPopup(
-            `<strong>${g.total} report(s)</strong><br/>
-             dead: ${g.dead}, injured: ${g.injured}<br/>
-             ${g.lat.toFixed(4)}, ${g.lon.toFixed(4)}`
-          );
-        });
-      } catch (e) {
-        console.error(e);
-      }
+      // group by approx location
+      const groups = {};
+
+      data.forEach(r => {
+        if (r.latitude == null || r.longitude == null) return;
+
+        const key = r.latitude.toFixed(4) + ',' + r.longitude.toFixed(4);
+
+        if (!groups[key]) {
+          groups[key] = {
+            lat: r.latitude,
+            lon: r.longitude,
+            total: 0,
+            dead: 0,
+            injured: 0,
+          };
+        }
+
+        groups[key].total += 1;
+        if (r.type === 'dead') groups[key].dead += 1;
+        if (r.type === 'injured') groups[key].injured += 1;
+      });
+
+      // draw markers
+      Object.values(groups).forEach(g => {
+        const marker = L.marker([g.lat, g.lon]);
+        marker.bindPopup(
+          `<strong>${g.total} report(s)</strong><br/>
+           dead: ${g.dead}, injured: ${g.injured}<br/>
+           ${g.lat.toFixed(4)}, ${g.lon.toFixed(4)}`
+        );
+        marker.addTo(markersLayer);
+      });
+
+    } catch (e) {
+      console.error('loadReports error', e);
     }
+  }
 
-    async function loadStats() {
-      try {
-        const res = await fetch('/stats');
-        const data = await res.json();
-        const counter = document.getElementById('counter');
+  // 4) Load statistics
+  async function loadStats() {
+    try {
+      const res = await fetch('/stats', { cache: 'no-store' });
+      const data = await res.json();
 
-        const dead = data.by_type.dead || 0;
-        const injured = data.by_type.injured || 0;
+      const counter = document.getElementById('counter');
+      const dead = data.by_type.dead || 0;
+      const injured = data.by_type.injured || 0;
 
-        // Example: "14 total · dead: 10 · injured: 4"
-        counter.textContent = `${data.total} total · dead: ${dead} · injured: ${injured}`;
-      } catch (e) {
-        console.error(e);
-        const counter = document.getElementById('counter');
-        counter.textContent = 'Stats error';
-      }
+      counter.textContent = `${data.total} total · dead: ${dead} · injured: ${injured}`;
+    } catch (e) {
+      console.error('loadStats error', e);
+      document.getElementById('counter').textContent = 'Stats error';
     }
+  }
 
-    // Load both map markers and stats
-    loadReports();
-    loadStats();
-  </script>
+  // 5) Refresh everything
+  async function refreshAll() {
+    await loadStats();
+    await loadReports();
+  }
+
+  // Initial load
+  refreshAll();
+
+  // Auto refresh every 5 seconds
+  setInterval(refreshAll, 5000);
+</script>
+
 
 </body>
 </html>

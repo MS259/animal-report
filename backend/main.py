@@ -68,10 +68,9 @@ WINDOW_MIN = 15
 CONFIRM_REPORTS = 5
 CONFIRM_UNIQUE_DEVICES = 3
 
-DUPLICATE_M = 50
-DUPLICATE_MIN = 2
-
-THROTTLE_MAX_IN_2MIN = 3
+THROTTLE_MAX_IN_2MIN = 20   # was 3
+DUPLICATE_MIN = 0.25        # 15 seconds (was 2)
+DUPLICATE_M = 25            # was 50
 
 
 def should_reject(session, device_hash: str, rep_type: str, lat: float, lon: float, now_dt: datetime):

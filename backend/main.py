@@ -338,7 +338,7 @@ def get_stats(
 def dashboard():
     """
     Simple HTML dashboard with a Leaflet map
-    that visualises all reports from /reports.
+    that visualises CONFIRMED incidents from /incidents.
     """
     return """
 <!DOCTYPE html>
@@ -347,12 +347,24 @@ def dashboard():
   <meta charset="utf-8" />
   <title>Animal Reports Map</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
   <link
     rel="stylesheet"
     href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
     crossorigin=""
   />
+
+  <!-- MarkerCluster plugin -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"
+  />
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"
+  />
+
   <style>
     html, body { height: 100%; margin: 0; padding: 0; }
     body {
@@ -382,114 +394,87 @@ def dashboard():
       border-radius: 999px;
       padding: 4px 10px;
       font-size: 11px;
+      white-space: nowrap;
     }
   </style>
 </head>
+
 <body>
   <div class="header">
     <div>
-      <div class="header-title">Animal Reports</div>
-      <div class="header-sub">Live map of reported animals</div>
+      <div class="header-title">Animal Incidents</div>
+      <div class="header-sub">Confirmed incidents (backend-grouped)</div>
     </div>
     <div class="pill" id="counter">Loading…</div>
   </div>
+
   <div id="map"></div>
+
   <script
     src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
     crossorigin=""
   ></script>
-    <script>
-  // 1) Create map
-  const map = L.map('map').setView([54.5, -2.5], 6); // UK
 
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    attribution: '&copy; OpenStreetMap contributors'
-  }).addTo(map);
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 
-  // 2) Layer group so we can clear markers safely
-  const markersLayer = L.layerGroup().addTo(map);
+  <script>
+    // 1) Create map
+    const map = L.map('map').setView([54.5, -2.5], 6); // UK
 
-  // 3) Load reports and redraw markers
-  async function loadReports() {
-    try {
-      const res = await fetch('/reports?limit=500', { cache: 'no-store' });
-      const data = await res.json();
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
 
-      // clear old markers
-      markersLayer.clearLayers();
+    // 2) Cluster layer
+    const cluster = L.markerClusterGroup();
+    map.addLayer(cluster);
 
-      // group by approx location
-      const groups = {};
+    // 3) Load confirmed incidents
+    async function loadIncidents() {
+      try {
+        const res = await fetch('/incidents?status=confirmed&hours=168&limit=1000', { cache: 'no-store' });
+        const data = await res.json();
 
-      data.forEach(r => {
-        if (r.latitude == null || r.longitude == null) return;
+        cluster.clearLayers();
 
-        const key = r.latitude.toFixed(4) + ',' + r.longitude.toFixed(4);
+        data.forEach(i => {
+          if (i.latitude == null || i.longitude == null) return;
 
-        if (!groups[key]) {
-          groups[key] = {
-            lat: r.latitude,
-            lon: r.longitude,
-            total: 0,
-            dead: 0,
-            injured: 0,
-          };
-        }
+          const marker = L.marker([i.latitude, i.longitude]);
 
-        groups[key].total += 1;
-        if (r.type === 'dead') groups[key].dead += 1;
-        if (r.type === 'injured') groups[key].injured += 1;
-      });
+          const emoji = i.type === 'dead' ? '☠️' : '🚑';
+          const reports = i.report_count ?? 0;
+          const devices = i.unique_device_count ?? 0;
 
-      // draw markers
-      Object.values(groups).forEach(g => {
-        const marker = L.marker([g.lat, g.lon]);
-        marker.bindPopup(
-          `<strong>${g.total} report(s)</strong><br/>
-           dead: ${g.dead}, injured: ${g.injured}<br/>
-           ${g.lat.toFixed(4)}, ${g.lon.toFixed(4)}`
-        );
-        marker.addTo(markersLayer);
-      });
+          marker.bindPopup(
+            `<strong>${emoji} Incident #${i.id}</strong><br/>
+             type: <b>${i.type}</b><br/>
+             reports: <b>${reports}</b><br/>
+             unique devices: <b>${devices}</b><br/>
+             last: ${i.last_report_at ?? 'n/a'}<br/>
+             ${Number(i.latitude).toFixed(5)}, ${Number(i.longitude).toFixed(5)}`
+          );
 
-    } catch (e) {
-      console.error('loadReports error', e);
+          cluster.addLayer(marker);
+        });
+
+        document.getElementById('counter').textContent =
+          `${data.length} confirmed incidents (7 days)`;
+
+      } catch (e) {
+        console.error('loadIncidents error', e);
+        document.getElementById('counter').textContent = 'Map error';
+      }
     }
-  }
 
-  // 4) Load statistics
-  async function loadStats() {
-    try {
-      const res = await fetch('/stats', { cache: 'no-store' });
-      const data = await res.json();
-
-      const counter = document.getElementById('counter');
-      const dead = data.by_type.dead || 0;
-      const injured = data.by_type.injured || 0;
-
-      counter.textContent = `${data.total} total · dead: ${dead} · injured: ${injured}`;
-    } catch (e) {
-      console.error('loadStats error', e);
-      document.getElementById('counter').textContent = 'Stats error';
-    }
-  }
-
-  // 5) Refresh everything
-  async function refreshAll() {
-    await loadStats();
-    await loadReports();
-  }
-
-  // Initial load
-  refreshAll();
-
-  // Auto refresh every 5 seconds
-  setInterval(refreshAll, 5000);
-</script>
-
+    // Initial load + refresh
+    loadIncidents();
+    setInterval(loadIncidents, 5000);
+  </script>
 
 </body>
 </html>
 """
+

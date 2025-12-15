@@ -80,23 +80,37 @@ def _try_exec(conn, sql: str):
 def ensure_schema():
     """
     create_all creates new tables, but does NOT add columns to existing ones.
-    This function safely adds new columns/indexes if missing (Postgres + SQLite dev).
+    This function safely adds new columns/indexes if missing.
     """
+    is_sqlite = DATABASE_URL.startswith("sqlite")
     with engine.begin() as conn:
-        # Add columns to reports table (safe attempts)
-        _try_exec(conn, "ALTER TABLE reports ADD COLUMN received_at TIMESTAMP")
-        _try_exec(conn, "ALTER TABLE reports ADD COLUMN device_hash VARCHAR")
-        _try_exec(conn, "ALTER TABLE reports ADD COLUMN ip_hash VARCHAR")
-        _try_exec(conn, "ALTER TABLE reports ADD COLUMN ua_hash VARCHAR")
-        _try_exec(conn, "ALTER TABLE reports ADD COLUMN accepted BOOLEAN")
-        _try_exec(conn, "ALTER TABLE reports ADD COLUMN reject_reason VARCHAR")
-        _try_exec(conn, "ALTER TABLE reports ADD COLUMN incident_id INTEGER")
+        if is_sqlite:
+            # SQLite: no IF NOT EXISTS for ADD COLUMN; rely on try/except
+            _try_exec(conn, "ALTER TABLE reports ADD COLUMN received_at TIMESTAMP")
+            _try_exec(conn, "ALTER TABLE reports ADD COLUMN device_hash VARCHAR")
+            _try_exec(conn, "ALTER TABLE reports ADD COLUMN ip_hash VARCHAR")
+            _try_exec(conn, "ALTER TABLE reports ADD COLUMN ua_hash VARCHAR")
+            _try_exec(conn, "ALTER TABLE reports ADD COLUMN accepted BOOLEAN")
+            _try_exec(conn, "ALTER TABLE reports ADD COLUMN reject_reason VARCHAR")
+            _try_exec(conn, "ALTER TABLE reports ADD COLUMN incident_id INTEGER")
+        else:
+            # Postgres: do it properly + idempotently
+            _try_exec(conn, "ALTER TABLE public.reports ADD COLUMN IF NOT EXISTS received_at timestamptz")
+            _try_exec(conn, "ALTER TABLE public.reports ADD COLUMN IF NOT EXISTS device_hash text")
+            _try_exec(conn, "ALTER TABLE public.reports ADD COLUMN IF NOT EXISTS ip_hash text")
+            _try_exec(conn, "ALTER TABLE public.reports ADD COLUMN IF NOT EXISTS ua_hash text")
+            _try_exec(conn, "ALTER TABLE public.reports ADD COLUMN IF NOT EXISTS accepted boolean")
+            _try_exec(conn, "ALTER TABLE public.reports ADD COLUMN IF NOT EXISTS reject_reason text")
+            _try_exec(conn, "ALTER TABLE public.reports ADD COLUMN IF NOT EXISTS incident_id integer")
 
-        # Defaults for existing rows (only matters if column was just added)
-        _try_exec(conn, "UPDATE reports SET accepted = 1 WHERE accepted IS NULL")
+        # Defaults / backfill (safe to run repeatedly)
+        if is_sqlite:
+            _try_exec(conn, "UPDATE reports SET accepted = 1 WHERE accepted IS NULL")
+        else:
+            _try_exec(conn, "UPDATE public.reports SET accepted = COALESCE(accepted, true)")
         _try_exec(conn, "UPDATE reports SET received_at = COALESCE(received_at, timestamp)")
 
-        # Indexes (works on Postgres + SQLite)
+        # Indexes
         _try_exec(conn, "CREATE INDEX IF NOT EXISTS idx_reports_device_hash ON reports (device_hash)")
         _try_exec(conn, "CREATE INDEX IF NOT EXISTS idx_reports_received_at ON reports (received_at)")
         _try_exec(conn, "CREATE INDEX IF NOT EXISTS idx_reports_incident_id ON reports (incident_id)")

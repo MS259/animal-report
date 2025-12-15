@@ -345,7 +345,7 @@ def dashboard():
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Animal Reports Map</title>
+  <title>Animal Incidents Map</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
   <link
@@ -371,6 +371,7 @@ def dashboard():
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
     #map { height: calc(100vh - 60px); width: 100%; }
+
     .header {
       height: 60px;
       display: flex;
@@ -396,14 +397,25 @@ def dashboard():
       font-size: 11px;
       white-space: nowrap;
     }
+
+    /* Simple coloured dot markers (divIcon) */
+    .incident-dot {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.95);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    }
+    .dot-dead { background: #e11d48; }     /* red */
+    .dot-injured { background: #f59e0b; }  /* amber */
   </style>
 </head>
 
 <body>
   <div class="header">
     <div>
-      <div class="header-title">Animal Incidents</div>
-      <div class="header-sub">Confirmed incidents (backend-grouped)</div>
+      <div class="header-title">Confirmed Animal Incidents</div>
+      <div class="header-sub">Auto-grouped from public reports</div>
     </div>
     <div class="pill" id="counter">Loading…</div>
   </div>
@@ -420,7 +432,7 @@ def dashboard():
 
   <script>
     // 1) Create map
-    const map = L.map('map').setView([54.5, -2.5], 6); // UK
+    const map = L.map('map').setView([54.5, -2.5], 6); // UK default
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
@@ -431,6 +443,18 @@ def dashboard():
     const cluster = L.markerClusterGroup();
     map.addLayer(cluster);
 
+    let didAutoFit = false;
+
+    function iconFor(type) {
+      const cls = (type === 'dead') ? 'dot-dead' : 'dot-injured';
+      return L.divIcon({
+        className: '',
+        html: `<div class="incident-dot ${cls}"></div>`,
+        iconSize: [14, 14],
+        iconAnchor: [7, 7]
+      });
+    }
+
     // 3) Load confirmed incidents
     async function loadIncidents() {
       try {
@@ -439,10 +463,14 @@ def dashboard():
 
         cluster.clearLayers();
 
+        const points = [];
+
         data.forEach(i => {
           if (i.latitude == null || i.longitude == null) return;
 
-          const marker = L.marker([i.latitude, i.longitude]);
+          points.push([i.latitude, i.longitude]);
+
+          const marker = L.marker([i.latitude, i.longitude], { icon: iconFor(i.type) });
 
           const emoji = i.type === 'dead' ? '☠️' : '🚑';
           const reports = i.report_count ?? 0;
@@ -463,13 +491,19 @@ def dashboard():
         document.getElementById('counter').textContent =
           `${data.length} confirmed incidents (7 days)`;
 
+        // Auto-fit once (first successful load with data)
+        if (!didAutoFit && points.length > 0) {
+          const bounds = L.latLngBounds(points);
+          map.fitBounds(bounds, { padding: [40, 40] });
+          didAutoFit = true;
+        }
+
       } catch (e) {
         console.error('loadIncidents error', e);
         document.getElementById('counter').textContent = 'Map error';
       }
     }
 
-    // Initial load + refresh
     loadIncidents();
     setInterval(loadIncidents, 5000);
   </script>

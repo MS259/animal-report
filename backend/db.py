@@ -1,7 +1,8 @@
 import os
+from datetime import datetime
 
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, ForeignKey, text
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 
 # Default: local SQLite for development
 DEFAULT_SQLITE_URL = "sqlite:///./reports.db"
@@ -23,6 +24,28 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
+class IncidentRecord(Base):
+    __tablename__ = "incidents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    status = Column(String, nullable=False, default="pending", index=True)  # pending|confirmed|closed
+    type = Column(String, nullable=False, index=True)  # dead|injured
+
+    centroid_lat = Column(Float, nullable=False)
+    centroid_lon = Column(Float, nullable=False)
+
+    first_report_at = Column(DateTime, nullable=False)
+    last_report_at = Column(DateTime, nullable=False)
+
+    report_count = Column(Integer, nullable=False, default=0)
+    unique_device_count = Column(Integer, nullable=False, default=0)
+
+    lat_bucket = Column(Integer, nullable=False, index=True)
+    lon_bucket = Column(Integer, nullable=False, index=True)
+
+    reports = relationship("ReportRecord", back_populates="incident")
+
+
 class ReportRecord(Base):
     __tablename__ = "reports"
 
@@ -32,6 +55,55 @@ class ReportRecord(Base):
     longitude = Column(Float)
     timestamp = Column(DateTime)
 
+    # --- anti-spam + grouping (new) ---
+    received_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+    device_hash = Column(String, nullable=True, index=True)
+    ip_hash = Column(String, nullable=True)
+    ua_hash = Column(String, nullable=True)
+
+    accepted = Column(Boolean, nullable=False, default=True, index=True)
+    reject_reason = Column(String, nullable=True)
+
+    incident_id = Column(Integer, ForeignKey("incidents.id"), nullable=True, index=True)
+    incident = relationship("IncidentRecord", back_populates="reports")
+
+
+def _try_exec(conn, sql: str):
+    # Best-effort schema patching: ignore "already exists" type errors
+    try:
+        conn.execute(text(sql))
+    except Exception:
+        pass
+
+
+def ensure_schema():
+    """
+    create_all creates new tables, but does NOT add columns to existing ones.
+    This function safely adds new columns/indexes if missing (Postgres + SQLite dev).
+    """
+    with engine.begin() as conn:
+        # Add columns to reports table (safe attempts)
+        _try_exec(conn, "ALTER TABLE reports ADD COLUMN received_at TIMESTAMP")
+        _try_exec(conn, "ALTER TABLE reports ADD COLUMN device_hash VARCHAR")
+        _try_exec(conn, "ALTER TABLE reports ADD COLUMN ip_hash VARCHAR")
+        _try_exec(conn, "ALTER TABLE reports ADD COLUMN ua_hash VARCHAR")
+        _try_exec(conn, "ALTER TABLE reports ADD COLUMN accepted BOOLEAN")
+        _try_exec(conn, "ALTER TABLE reports ADD COLUMN reject_reason VARCHAR")
+        _try_exec(conn, "ALTER TABLE reports ADD COLUMN incident_id INTEGER")
+
+        # Defaults for existing rows (only matters if column was just added)
+        _try_exec(conn, "UPDATE reports SET accepted = 1 WHERE accepted IS NULL")
+        _try_exec(conn, "UPDATE reports SET received_at = COALESCE(received_at, timestamp)")
+
+        # Indexes (works on Postgres + SQLite)
+        _try_exec(conn, "CREATE INDEX IF NOT EXISTS idx_reports_device_hash ON reports (device_hash)")
+        _try_exec(conn, "CREATE INDEX IF NOT EXISTS idx_reports_received_at ON reports (received_at)")
+        _try_exec(conn, "CREATE INDEX IF NOT EXISTS idx_reports_incident_id ON reports (incident_id)")
+        _try_exec(conn, "CREATE INDEX IF NOT EXISTS idx_incidents_bucket ON incidents (lat_bucket, lon_bucket, last_report_at)")
+        _try_exec(conn, "CREATE INDEX IF NOT EXISTS idx_incidents_status_last ON incidents (status, last_report_at)")
+
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    ensure_schema()

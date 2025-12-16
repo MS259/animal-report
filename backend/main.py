@@ -279,10 +279,13 @@ def list_incidents(status: str = "confirmed", hours: int = 24, limit: int = 500)
     since = datetime.utcnow() - timedelta(hours=hours)
     with SessionLocal() as session:
         q = session.query(IncidentRecord).filter(
-            IncidentRecord.status == status,
             IncidentRecord.last_report_at >= since
-        ).order_by(IncidentRecord.last_report_at.desc()).limit(limit)
+        )
 
+        if status != "all":
+            q = q.filter(IncidentRecord.status == status)
+
+        q = q.order_by(IncidentRecord.last_report_at.desc()).limit(limit)
         items = q.all()
 
     return [

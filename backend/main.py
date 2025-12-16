@@ -460,7 +460,7 @@ def dashboard():
     // 3) Load confirmed incidents
     async function loadIncidents() {
       try {
-        const res = await fetch('/incidents?status=confirmed&hours=168&limit=1000', { cache: 'no-store' });
+        const res = await fetch('/incidents?status=all&hours=168&limit=1000', { cache: 'no-store' });
         const data = await res.json();
 
         cluster.clearLayers();

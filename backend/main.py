@@ -66,7 +66,7 @@ def haversine_m(lat1, lon1, lat2, lon2) -> float:
 RADIUS_M = 100
 WINDOW_MIN = 15
 CONFIRM_REPORTS = 5
-CONFIRM_UNIQUE_DEVICES = 3
+#CONFIRM_UNIQUE_DEVICES = 3
 
 THROTTLE_MAX_IN_2MIN = 20   # was 3
 DUPLICATE_MIN = 0.25        # 15 seconds (was 2)

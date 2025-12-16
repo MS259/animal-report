@@ -28,7 +28,7 @@ app.add_middleware(
 
 
 class Report(BaseModel):
-    type: Literal["dead", "injured"]
+    type: Literal["dead", "injured", "sleeping"]
     latitude: float
     longitude: float
     timestamp: datetime
@@ -460,7 +460,7 @@ def dashboard():
     // 3) Load confirmed incidents
     async function loadIncidents() {
       try {
-        const res = await fetch('/incidents?status=all&hours=168&limit=1000', { cache: 'no-store' });
+        const res = await fetch('/incidents?status=all&hours=168&limit=1000', { cache: 'no-store' })
         const data = await res.json();
 
         cluster.clearLayers();
